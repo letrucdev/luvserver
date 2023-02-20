@@ -116,7 +116,7 @@ app.post("/register", async (req, res) => {
   db.query(`SELECT * FROM user where account='${account}'`, (err, result) => {
     if (err) throw err;
     if (result.length > 0) {
-      res.status(401).json({ status: 401, auth: false });
+      res.status(200).json({ status: 200, auth: false });
     } else {
       db.query(
         `INSERT INTO user(username, email, account, password) VALUES ('${username}','${email}','${account}','${password}')`,
