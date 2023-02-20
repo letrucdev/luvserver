@@ -1,0 +1,30 @@
+{
+  "name": "luvserver",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lechinhtruc/luvserver.git"
+  },
+  "keywords": [
+    "luvserver",
+    "luvmessenger"
+  ],
+  "author": "letruc",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/lechinhtruc/luvserver/issues"
+  },
+  "homepage": "https://github.com/lechinhtruc/luvserver#readme",
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.0",
+    "mysql": "^2.18.1"
+  }
+}
