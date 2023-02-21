@@ -10,7 +10,7 @@ require("dotenv").config();
 
 app.use(express.urlencoded());
 app.use(express.json());
-app.use("/cdn/images", express.static("public/cdn/images"));
+app.use("/cdn", express.static("public/cdn"));
 
 app.use(function (req, res, next) {
   res.header("Access-Control-Allow-Origin", "*"); // update to match the domain you will make the request from
@@ -75,6 +75,38 @@ const Login = (req, res, next) => {
   );
 };
 
+const generateSetting = async (userId) => {
+  const setting = {
+    backgroundUrl: "/giphy.jpg",
+  };
+  const settingEncoded = Buffer.from(JSON.stringify(setting)).toString(
+    "base64"
+  );
+  db.query(
+    `INSERT INTO user_setting(user_id, setting) VALUES('${userId}', '${settingEncoded}')`,
+    (err) => {
+      if (err) throw err;
+      return true;
+    }
+  );
+};
+
+const getUserData = (userId, res) => {
+  db.query(
+    `SELECT * FROM user INNER JOIN user_setting on user.id = user_setting.user_id where user.id = ${userId}`,
+    (err, result) => {
+      if (err) throw err;
+      res.status(200).json({
+        id: result[0]?.user_id,
+        username: result[0]?.username,
+        email: result[0]?.email,
+        account_type: result[0]?.account_type,
+        setting: result[0]?.setting,
+      });
+    }
+  );
+};
+
 const Register = (req, res, next) => {
   const account = req.body.account;
   const username = req.body.username;
@@ -91,8 +123,9 @@ const Register = (req, res, next) => {
       } else {
         db.query(
           `INSERT INTO user(username, email, account, password) VALUES ('${username}','${email}','${account}','${password}')`,
-          (err) => {
+          async (err, result) => {
             if (err) throw err;
+            await generateSetting(result.insertId);
             next();
           }
         );
@@ -114,6 +147,10 @@ app.get("/", (req, res) => {
 
 app.post("/api/login", Login, (req, res) => {
   res.status(200).json(req.data);
+});
+
+app.get("/api/getUserData", verifyToken, (req, res) => {
+  getUserData(req.data.id, res);
 });
 
 app.get("/api/myInfomation", verifyToken, (req, res) => {
