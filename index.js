@@ -2,6 +2,7 @@ const express = require("express");
 const mysql = require("mysql");
 const fs = require("fs");
 const crypto = require("crypto");
+const multer = require("multer");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 const app = express();
@@ -18,6 +19,7 @@ app.use(function (req, res, next) {
     "Access-Control-Allow-Headers",
     "Origin, X-Requested-With, Content-Type, Accept, Authorization"
   );
+  res.header("Access-Control-Allow-Methods", "PUT, POST, GET, DELETE, OPTIONS");
   next();
 });
 
@@ -45,39 +47,18 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-const Login = (req, res, next) => {
-  const account = req.body.account;
-  const password = crypto
-    .createHash("sha1")
-    .update(req.body.password)
-    .digest("base64");
-  db.query(
-    `SELECT * FROM user WHERE account='${account}' AND password='${password}'`,
-    (err, result) => {
-      if (err) return false;
-      if (result.length > 0) {
-        req.data = {
-          status: 200,
-          auth: true,
-          token: generateToken({
-            id: result[0].id,
-            account: account,
-            username: result[0].username,
-            email: result[0].email,
-            accountType: result[0].account_type,
-          }),
-        };
-        next();
-      } else {
-        res.status(200).json({ status: 200, auth: false });
-      }
-    }
-  );
-};
-
 const generateSetting = async (userId) => {
   const setting = {
-    backgroundUrl: "/giphy.jpg",
+    avatar: "/giphy.jpg",
+    status: 1,
+    friendrequest: 1,
+    autolock: 0,
+    theme: "/bg2.jpg",
+    typing: 1,
+    hide_prev_image: 0,
+    notification: 1,
+    notification_sounds: 1,
+    hide_notification_content: 0,
   };
   const settingEncoded = Buffer.from(JSON.stringify(setting)).toString(
     "base64"
@@ -103,6 +84,32 @@ const getUserData = (userId, res) => {
         account_type: result[0]?.account_type,
         setting: result[0]?.setting,
       });
+    }
+  );
+};
+
+const Login = (req, res, next) => {
+  const account = req.body.account;
+  const password = crypto
+    .createHash("sha1")
+    .update(req.body.password)
+    .digest("base64");
+  db.query(
+    `SELECT * FROM user WHERE account='${account}' AND password='${password}'`,
+    (err, result) => {
+      if (err) return false;
+      if (result.length > 0) {
+        req.data = {
+          status: 200,
+          auth: true,
+          token: generateToken({
+            id: result[0].id,
+          }),
+        };
+        next();
+      } else {
+        res.status(200).json({ status: 200, auth: false });
+      }
     }
   );
 };
@@ -175,6 +182,67 @@ app.get("/api/getMessage", verifyToken, (req, res) => {
 
 app.post("/api/register", Register, (req, res) => {
   res.status(200).json({ status: 200, auth: true });
+});
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, "./public/cdn/images/avatar");
+  },
+  filename: function (req, file, cb) {
+    cb(null, file.originalname);
+  },
+});
+
+const maxSize = 5 * 1000 * 1000;
+
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: maxSize },
+  fileFilter: function (req, file, cb) {
+    // Set the filetypes, it is optional
+    var filetypes = /jpeg|jpg|png/;
+    var mimetype = filetypes.test(file.mimetype);
+    var extname = filetypes.test(path.extname(file.originalname).toLowerCase());
+    if (mimetype && extname) {
+      return cb(null, true);
+    }
+    cb(
+      "Error: File upload only supports the " +
+        "following filetypes - " +
+        filetypes
+    );
+  },
+}).single("upload_file");
+
+app.post("/api/upload", (req, res) => {
+  upload(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      res.sendStatus(403);
+    } else if (err) {
+      res.sendStatus(403);
+    } else {
+      res
+        .status(200)
+        .json({ status: 200, upload: { filename: req?.file?.filename } });
+    }
+  });
+});
+
+app.put("/api/updateSetting", verifyToken, (req, res) => {
+  const usersetting = req.body.setting;
+  const userId = req.data.id;
+  const settingEncoded = Buffer.from(usersetting).toString("base64");
+  db.query(
+    `UPDATE user_setting SET setting='${settingEncoded}' where user_id='${userId}'`,
+    (err, result) => {
+      if (err) throw err;
+      if (result.affectedRows > 0) {
+        res.status(200).json({ status: 200, update: true });
+      } else {
+        res.sendStatus(403);
+      }
+    }
+  );
 });
 
 app.listen(process.env.SERVER_PORT, () => {
