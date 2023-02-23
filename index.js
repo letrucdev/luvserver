@@ -27,6 +27,17 @@ const configDB = fs.readFileSync("dbConfig.json", "utf8");
 
 const db = mysql.createConnection(JSON.parse(configDB));
 
+const maxSize = 10 * 1000 * 1000;
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, "./public/cdn/images/avatar");
+  },
+  filename: function (req, file, cb) {
+    cb(null, file.originalname);
+  },
+});
+
 const generateToken = (payload) => {
   const token = jwt.sign(payload, process.env.PRIVATE_SERVER_KEY);
   return token;
@@ -143,6 +154,28 @@ const Register = (req, res, next) => {
   }
 };
 
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: maxSize },
+  fileFilter: function (req, file, cb) {
+    // Set the filetypes, it is optional
+    var filetypes = /jpeg|jpg|png/;
+    var mimetype = filetypes.test(file.mimetype);
+    var extname = filetypes.test(path.extname(file.originalname).toLowerCase());
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(
+        new Error(
+          "Error: File upload only supports the " +
+            "following filetypes - " +
+            filetypes
+        )
+      );
+    }
+  },
+}).single("upload_file");
+
 db.connect(function (err) {
   if (err) throw err;
   console.log("Database: CONNECTED!");
@@ -184,36 +217,6 @@ app.post("/api/register", Register, (req, res) => {
   res.status(200).json({ status: 200, auth: true });
 });
 
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, "./public/cdn/images/avatar");
-  },
-  filename: function (req, file, cb) {
-    cb(null, file.originalname);
-  },
-});
-
-const maxSize = 5 * 1000 * 1000;
-
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: maxSize },
-  fileFilter: function (req, file, cb) {
-    // Set the filetypes, it is optional
-    var filetypes = /jpeg|jpg|png/;
-    var mimetype = filetypes.test(file.mimetype);
-    var extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-    if (mimetype && extname) {
-      return cb(null, true);
-    }
-    cb(
-      "Error: File upload only supports the " +
-        "following filetypes - " +
-        filetypes
-    );
-  },
-}).single("upload_file");
-
 app.post("/api/upload", (req, res) => {
   upload(req, res, (err) => {
     if (err instanceof multer.MulterError) {
@@ -226,6 +229,48 @@ app.post("/api/upload", (req, res) => {
         .json({ status: 200, upload: { filename: req?.file?.filename } });
     }
   });
+});
+
+app.put("/api/updateUsername", verifyToken, (req, res) => {
+  const username = req.body.username;
+  const password = crypto
+    .createHash("sha1")
+    .update(req.body.password)
+    .digest("base64");
+  const userId = req.data.id;
+  db.query(
+    `UPDATE user SET username='${username}' WHERE id = ${userId} AND password ='${password}'`,
+    (err, result) => {
+      if (err) res.sendStatus(403);
+      if (result.affectedRows > 0) {
+        res
+          .status(200)
+          .json({ status: 200, result: "Change username success!" });
+      } else {
+        res.status(200).json({ status: 200, result: "Password is incorrect!" });
+      }
+    }
+  );
+});
+
+app.put("/api/updateUseremail", verifyToken, (req, res) => {
+  const email = req.body.email;
+  const password = crypto
+    .createHash("sha1")
+    .update(req.body.password)
+    .digest("base64");
+  const userId = req.data.id;
+  db.query(
+    `UPDATE user SET email='${email}' WHERE id = ${userId} AND password ='${password}'`,
+    (err, result) => {
+      if (err) res.sendStatus(403);
+      if (result.affectedRows > 0) {
+        res.status(200).json({ status: 200, result: "Change email success!" });
+      } else {
+        res.status(200).json({ status: 200, result: "Password is incorrect!" });
+      }
+    }
+  );
 });
 
 app.put("/api/updateSetting", verifyToken, (req, res) => {
