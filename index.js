@@ -219,14 +219,12 @@ app.post("/api/register", Register, (req, res) => {
 
 app.post("/api/upload", (req, res) => {
   upload(req, res, (err) => {
-    if (err instanceof multer.MulterError) {
-      res.sendStatus(403);
-    } else if (err) {
+    if (err instanceof multer.MulterError || err) {
       res.sendStatus(403);
     } else {
       res
         .status(200)
-        .json({ status: 200, upload: { filename: req?.file?.filename } });
+        .json({ status: 200, upload: { filename: req.file.filename } });
     }
   });
 });
