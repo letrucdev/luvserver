@@ -5,11 +5,13 @@ const crypto = require("crypto");
 const multer = require("multer");
 const jwt = require("jsonwebtoken");
 const path = require("path");
+const compression = require("compression");
 const app = express();
 
 require("dotenv").config();
 
 app.use(express.urlencoded());
+app.use(compression());
 app.use(express.json());
 app.use("/cdn", express.static("public/cdn"));
 
