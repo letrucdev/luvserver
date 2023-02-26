@@ -33,7 +33,12 @@ const maxSize = 10 * 1000 * 1000;
 
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, "./public/cdn/images/avatar");
+    const uploadDir = `./public/cdn/images/avatar/${req.data.id}/`;
+    if (!fs.existsSync(uploadDir)) {
+      // Kiểm tra xem folder đã tồn tại hay chưa
+      fs.mkdirSync(uploadDir); // Tạo folder mới nếu folder chưa tồn tại
+    }
+    cb(null, uploadDir);
   },
   filename: function (req, file, cb) {
     cb(null, file.originalname);
@@ -219,14 +224,15 @@ app.post("/api/register", Register, (req, res) => {
   res.status(200).json({ status: 200, auth: true });
 });
 
-app.post("/api/upload", (req, res) => {
+app.post("/api/upload", verifyToken, (req, res) => {
   upload(req, res, (err) => {
     if (err instanceof multer.MulterError || err) {
       res.sendStatus(403);
     } else {
-      res
-        .status(200)
-        .json({ status: 200, upload: { filename: req.file.filename } });
+      res.status(200).json({
+        status: 200,
+        upload: { filedir: `/${req.data.id}/${req.file.filename}` },
+      });
     }
   });
 });
