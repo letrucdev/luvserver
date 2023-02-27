@@ -67,7 +67,7 @@ const verifyToken = (req, res, next) => {
 
 const generateSetting = async (userId) => {
   const setting = {
-    avatar: "/giphy.jpg",
+    avatar: "",
     status: 1,
     friendrequest: 1,
     autolock: 0,
