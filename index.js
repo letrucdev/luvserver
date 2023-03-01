@@ -200,6 +200,17 @@ app.get("/api/getUserData", verifyToken, (req, res) => {
   getUserData(req.data.id, res);
 });
 
+app.get("/api/getFriendList", verifyToken, (req, res) => {
+  const userId = req.data.id;
+  db.query(
+    `SELECT * FROM user_friend_list WHERE user_id='${userId}'`,
+    (err, result) => {
+      if (err) throw err;
+      res.status(200).json(result);
+    }
+  );
+});
+
 app.get("/api/myInfomation", verifyToken, (req, res) => {
   res.status(200).json({
     id: req.data.id,
@@ -218,6 +229,18 @@ app.get("/api/getMessage", verifyToken, (req, res) => {
       ],
     },
   ]);
+});
+
+app.post("/api/searchUser", verifyToken, (req, res) => {
+  const username = req.body.username;
+  const userId = req.data.id;
+  db.query(
+    `SELECT id, username, email,account_type, setting FROM user INNER JOIN user_setting on user.id= user_setting.user_id WHERE user.username LIKE '%${username}%' AND id!=${userId} ORDER BY user.username ASC`,
+    (err, result) => {
+      if (err) throw err;
+      res.status(200).json(result);
+    }
+  );
 });
 
 app.post("/api/register", Register, (req, res) => {
