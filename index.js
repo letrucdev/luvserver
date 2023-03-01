@@ -27,7 +27,15 @@ app.use(function (req, res, next) {
 
 const configDB = fs.readFileSync("dbConfig.json", "utf8");
 
-const db = mysql.createConnection(JSON.parse(configDB));
+const db = mysql.createPool(JSON.parse(configDB));
+
+/* db.on('acquire', (connection) => {
+  console.log(`Connection ${connection.threadId} acquired`);
+}); */
+
+db.on("connection", () => {
+  console.log(`Number of database connections: ${db._allConnections.length}`);
+});
 
 const maxSize = 10 * 1000 * 1000;
 
@@ -182,11 +190,6 @@ const upload = multer({
     }
   },
 }).single("upload_file");
-
-db.connect(function (err) {
-  if (err) throw err;
-  console.log("Database: CONNECTED!");
-});
 
 app.get("/", (req, res) => {
   res.sendStatus(200);
