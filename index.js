@@ -1,12 +1,21 @@
 const express = require("express");
-const mysql = require("mysql");
+const mysql = require("mysql2");
 const fs = require("fs");
 const crypto = require("crypto");
 const multer = require("multer");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 const compression = require("compression");
+const { Server } = require("socket.io");
+const { createServer } = require("http");
+
 const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: ["http://localhost:3000"],
+  },
+});
 
 require("dotenv").config();
 
@@ -29,12 +38,131 @@ const configDB = fs.readFileSync("dbConfig.json", "utf8");
 
 const db = mysql.createPool(JSON.parse(configDB));
 
-/* db.on('acquire', (connection) => {
-  console.log(`Connection ${connection.threadId} acquired`);
-}); */
 
 db.on("connection", () => {
   console.log(`Number of database connections: ${db._allConnections.length}`);
+});
+
+io.on("connection", (socket) => {
+  socket.on("disconnect", () => {
+    db.promise()
+      .query(`DELETE FROM user_online WHERE socket_room='${socket.id}'`)
+      .then(([row, fields]) => {
+        console.log(socket.id, "::disconnect");
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  });
+
+  socket.on("add_user_online", (data) => {
+    const user_id = data.user_id;
+    const username = data.username;
+    db.promise()
+      .query(
+        `INSERT INTO user_online(user_id, username, socket_room, ip_address) VALUES ('${user_id}','${username}','${socket.id}', '${socket.handshake.address}') ON DUPLICATE KEY UPDATE socket_room='${socket.id}', ip_address='${socket.handshake.address}'`
+      )
+      .then(([row, fields]) => {
+        console.log("User::", username, "::logon");
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  });
+
+  socket.on("add_friend", (data) => {
+    db.query(
+      `SELECT * FROM user_friend_request WHERE from_user_id=${data.from_user_id} AND to_user_id=${data.to_user_id} OR from_user_id=${data.to_user_id} AND to_user_id=${data.from_user_id}`,
+      (err, result) => {
+        if (err) throw err;
+        if (result[0] === undefined) {
+          Promise.all([
+            db
+              .promise()
+              .query(
+                `INSERT INTO user_friend_request(from_user_id, to_user_id) VALUES('${data.from_user_id}', '${data.to_user_id}')`
+              ),
+            db
+              .promise()
+              .query(
+                `INSERT INTO user_notification(to_user_id, from_user_id, from_user, content, image) VALUES ('${data.to_user_id}','${data.from_user_id}', '${data.from_user}' , '', '${data.user_avatar}')`
+              ),
+            db
+              .promise()
+              .query(
+                `SELECT * from user_online where user_id='${data.to_user_id}'`
+              ),
+          ]).then(([result1, result2, result3]) => {
+            if (result3[0][0] !== undefined) {
+              socket.to(result3[0][0].socket_room).emit("new_notification");
+            }
+          });
+        } else {
+          socket.emit("is_sent_request");
+        }
+      }
+    );
+  });
+
+  socket.on("accept_request", (data) => {
+    /*  db.query(
+      `SELECT * from user_online where user_id='${data.to_user_id}'`,
+      (err, resultOnline) => {
+        if (err) throw err;
+        db.query(
+          `INSERT INTO user_notification(to_user_id, from_user_id, from_user, content, image, type) VALUES ('${data.to_user_id}','${data.from_user_id}', '${data.from_user_name}' , '', '${data.from_user_avatar}', '1')`,
+          (err, result) => {
+            if (err) throw err;
+            db.query(
+              `DELETE FROM user_friend_request where to_user_id ='${data.to_user_id}'`,
+              (err) => {
+                if (err) throw err;
+              }
+            );
+            if (resultOnline[0] !== undefined) {
+              socket.to(resultOnline[0].socket_room).emit("accepted_request");
+            }
+          }
+        );
+      }
+    ); */
+    Promise.all([
+      db
+        .promise()
+        .query(`SELECT * from user_online where user_id='${data.to_user_id}'`),
+      db
+        .promise()
+        .query(
+          `INSERT INTO user_notification(to_user_id, from_user_id, from_user, content, image, type) VALUES ('${data.to_user_id}','${data.from_user_id}', '${data.from_user_name}' , '', '${data.from_user_avatar}', '1')`
+        ),
+      db
+        .promise()
+        .query(
+          `DELETE FROM user_friend_request WHERE to_user_id =${data.to_user_id}`
+        ),
+    ])
+      .then(([result1, result2, result3]) => {
+        if (result1[0][0] !== undefined) {
+          socket.to(result1[0][0].socket_room).emit("accepted_request");
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  });
+
+  socket.on("read_notification", (data) => {
+    db.promise()
+      .query(
+        `UPDATE user_notification SET isRead='1' WHERE to_user_id='${data.userId}'`
+      )
+      .then(() => {
+        socket.emit("is_read_notification");
+      })
+      .catch((err) => {
+        console.error(err);
+      });
+  });
 });
 
 const maxSize = 10 * 1000 * 1000;
@@ -206,7 +334,7 @@ app.get("/api/getUserData", verifyToken, (req, res) => {
 app.get("/api/getFriendList", verifyToken, (req, res) => {
   const userId = req.data.id;
   db.query(
-    `SELECT * FROM user_friend_list WHERE user_id='${userId}'`,
+    `SELECT * FROM user_friend_list WHERE user_id='${userId}' OR friend_id='${userId}'`,
     (err, result) => {
       if (err) throw err;
       res.status(200).json(result);
@@ -234,6 +362,20 @@ app.get("/api/getMessage", verifyToken, (req, res) => {
   ]);
 });
 
+app.get("/api/getNotification", verifyToken, (req, res) => {
+  const userId = req.data.id;
+  db.promise()
+    .query(
+      `SELECT * FROM user_notification where to_user_id= '${userId}' ORDER BY type ASC`
+    )
+    .then(([row]) => {
+      res.status(200).json({ notification: row });
+    })
+    .catch((err) => {
+      console.error(err);
+    });
+});
+
 app.post("/api/searchUser", verifyToken, (req, res) => {
   const username = req.body.username;
   const userId = req.data.id;
@@ -242,6 +384,42 @@ app.post("/api/searchUser", verifyToken, (req, res) => {
     (err, result) => {
       if (err) throw err;
       res.status(200).json(result);
+    }
+  );
+});
+
+app.post("/api/acceptFriend", verifyToken, (req, res) => {
+  const userId = req.data.id;
+  const friendId = req.body.friendId;
+  const username = req.body.username;
+  const notifiId = req.body.notifiId;
+  db.query(
+    `INSERT INTO user_friend_list(user_id, friend_id, username) VALUES('${userId}', '${friendId}', '${username}')`,
+    (err, result) => {
+      if (err) throw err;
+      db.query(
+        `DELETE FROM user_notification where id=${notifiId}`,
+        (err, result) => {
+          if (err) throw err;
+          res.status(200).json({
+            status: 200,
+            friend_id: friendId,
+            from_user_id: userId,
+            accept: true,
+          });
+        }
+      );
+    }
+  );
+});
+
+app.delete("/api/deleteNotification/:id", (req, res) => {
+  const notifiId = req.params.id;
+  db.query(
+    `DELETE FROM user_notification where id=${notifiId}`,
+    (err, result) => {
+      if (err) throw err;
+      res.status(200).send("Delete ok");
     }
   );
 });
@@ -322,6 +500,6 @@ app.put("/api/updateSetting", verifyToken, (req, res) => {
   );
 });
 
-app.listen(process.env.SERVER_PORT, () => {
+httpServer.listen(process.env.SERVER_PORT, () => {
   console.log(`Server is listening on port ${process.env.SERVER_PORT}`);
 });
