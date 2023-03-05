@@ -13,7 +13,7 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: ["http://localhost:3000"],
+    origin: "*",
   },
 });
 
@@ -38,7 +38,6 @@ const configDB = fs.readFileSync("dbConfig.json", "utf8");
 
 const db = mysql.createPool(JSON.parse(configDB));
 
-
 db.on("connection", () => {
   console.log(`Number of database connections: ${db._allConnections.length}`);
 });
@@ -57,13 +56,12 @@ io.on("connection", (socket) => {
 
   socket.on("add_user_online", (data) => {
     const user_id = data.user_id;
-    const username = data.username;
     db.promise()
       .query(
-        `INSERT INTO user_online(user_id, username, socket_room, ip_address) VALUES ('${user_id}','${username}','${socket.id}', '${socket.handshake.address}') ON DUPLICATE KEY UPDATE socket_room='${socket.id}', ip_address='${socket.handshake.address}'`
+        `INSERT INTO user_online(user_id, socket_room, ip_address) VALUES ('${user_id}','${socket.id}', '${socket.handshake.address}') ON DUPLICATE KEY UPDATE socket_room='${socket.id}', ip_address='${socket.handshake.address}'`
       )
       .then(([row, fields]) => {
-        console.log("User::", username, "::logon");
+        console.log("User::", user_id, "::logon");
       })
       .catch((err) => {
         console.error(err);
@@ -105,27 +103,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("accept_request", (data) => {
-    /*  db.query(
-      `SELECT * from user_online where user_id='${data.to_user_id}'`,
-      (err, resultOnline) => {
-        if (err) throw err;
-        db.query(
-          `INSERT INTO user_notification(to_user_id, from_user_id, from_user, content, image, type) VALUES ('${data.to_user_id}','${data.from_user_id}', '${data.from_user_name}' , '', '${data.from_user_avatar}', '1')`,
-          (err, result) => {
-            if (err) throw err;
-            db.query(
-              `DELETE FROM user_friend_request where to_user_id ='${data.to_user_id}'`,
-              (err) => {
-                if (err) throw err;
-              }
-            );
-            if (resultOnline[0] !== undefined) {
-              socket.to(resultOnline[0].socket_room).emit("accepted_request");
-            }
-          }
-        );
-      }
-    ); */
     Promise.all([
       db
         .promise()
@@ -138,12 +115,13 @@ io.on("connection", (socket) => {
       db
         .promise()
         .query(
-          `DELETE FROM user_friend_request WHERE to_user_id =${data.to_user_id}`
+          `DELETE FROM user_friend_request WHERE to_user_id=${data.to_user_id} OR to_user_id=${data.from_user_id}`
         ),
     ])
-      .then(([result1, result2, result3]) => {
+      .then(([result1]) => {
         if (result1[0][0] !== undefined) {
           socket.to(result1[0][0].socket_room).emit("accepted_request");
+          socket.to(result1[0][0].socket_room).emit("new_notification");
         }
       })
       .catch((err) => {
@@ -163,7 +141,99 @@ io.on("connection", (socket) => {
         console.error(err);
       });
   });
+
+  socket.on("send_private_message", (data) => {
+    Promise.all([
+      db
+        .promise()
+        .query(`SELECT * from user_online where user_id='${data.to_user_id}'`),
+      db.promise().query(`SELECT CURRENT_TIMESTAMP`),
+      db
+        .promise()
+        .query(
+          `INSERT INTO user_chat(sent_id, recived_id, content) VALUES ('${data.from_user_id}', '${data.to_user_id}', '${data.content}')`
+        ),
+    ]).then(async ([result1, result2, result3]) => {
+      const message = {
+        id: result3[0].insertId,
+        at: result2[0][0].CURRENT_TIMESTAMP,
+        sent_id: data.from_user_id,
+        recived_id: data.to_user_id,
+        content: data.content,
+      };
+      updateHistoryChat(data.from_user_id, data.to_user_id, data.content);
+      if (result1[0][0] !== undefined) {
+        socket
+          .to(result1[0][0].socket_room)
+          .emit("new_message_from_user", message);
+        socket
+          .to(result1[0][0].socket_room)
+          .to(socket.id)
+          .emit("new_history_chat");
+      } else {
+        socket.emit("new_history_chat");
+      }
+      socket.emit("return_message", message);
+    });
+  });
+
+  socket.on("read_message", (data) => {
+    db.promise()
+      .query(
+        `UPDATE user_chat_history SET isRead='1' where user_id='${data.user_id}' AND user_chat_id='${data.user_chat_id}'`
+      )
+      .then(([row]) => {
+        socket.emit("new_history_chat");
+      })
+      .catch((err) => {
+        throw err;
+      });
+  });
 });
+
+const updateHistoryChat = async (user_id, user_chat_id, last_message) => {
+  await db
+    .promise()
+    .query(
+      `SELECT * FROM user_chat_history where user_id='${user_id}' AND user_chat_id='${user_chat_id}' OR user_id='${user_chat_id}' AND user_chat_id='${user_id}'`
+    )
+    .then(([row]) => {
+      if (row.length > 0) {
+        db.promise()
+          .query(
+            `UPDATE user_chat_history SET last_message='${JSON.stringify({
+              from_user_id: user_id,
+              content: last_message,
+            })}', at=CURRENT_TIMESTAMP, isRead='0' where user_id='${user_id}' AND user_chat_id='${user_chat_id}' OR user_id='${user_chat_id}' AND user_chat_id='${user_id}'`
+          )
+          .then(([result1]) => {
+            /*  console.log(result1); */
+          })
+          .catch((err) => {
+            throw err;
+          });
+      } else {
+        db.promise()
+          .query(
+            `INSERT INTO user_chat_history(user_id, user_chat_id, last_message) VALUES ('${user_id}', '${user_chat_id}', '${JSON.stringify(
+              {
+                from_user_id: user_id,
+                content: last_message,
+              }
+            )}'), ('${user_chat_id}', '${user_id}', '${JSON.stringify({
+              from_user_id: user_id,
+              content: last_message,
+            })}')`
+          )
+          .then(([row]) => {
+            /* console.log(row); */
+          })
+          .catch((err) => {
+            throw err;
+          });
+      }
+    });
+};
 
 const maxSize = 10 * 1000 * 1000;
 
@@ -333,13 +403,16 @@ app.get("/api/getUserData", verifyToken, (req, res) => {
 
 app.get("/api/getFriendList", verifyToken, (req, res) => {
   const userId = req.data.id;
-  db.query(
-    `SELECT * FROM user_friend_list WHERE user_id='${userId}' OR friend_id='${userId}'`,
-    (err, result) => {
-      if (err) throw err;
-      res.status(200).json(result);
-    }
-  );
+  db.promise()
+    .query(
+      `SELECT user_friend_list.user_id, user_friend_list.friend_id, user_friend_list.add_at, user.username, user.account_type, user_setting.setting FROM user_friend_list JOIN user on user.id = user_friend_list.friend_id JOIN user_setting on user.id=user_setting.user_id WHERE user_friend_list.user_id = '${userId}'`
+    )
+    .then(([row]) => {
+      res.status(200).json(row);
+    })
+    .catch((err) => {
+      throw err;
+    });
 });
 
 app.get("/api/myInfomation", verifyToken, (req, res) => {
@@ -351,22 +424,41 @@ app.get("/api/myInfomation", verifyToken, (req, res) => {
   });
 });
 
-app.get("/api/getMessage", verifyToken, (req, res) => {
-  res.json([
-    {
-      listmessage: [
-        { id: 1, content: "ok12312" },
-        { id: 2, content: "ok12312" },
-      ],
-    },
-  ]);
+app.get("/api/getChat/:id", verifyToken, (req, res) => {
+  const userId = req.data.id;
+  const recivedId = req.params.id;
+  db.promise()
+    .query(
+      `SELECT * from user_chat where sent_id=${userId} AND recived_id=${recivedId} OR sent_id=${recivedId} AND recived_id=${userId}`
+    )
+    .then(([row]) => {
+      res.status(200).json({ status: 200, list_message: row });
+    })
+    .catch((err) => {
+      throw err;
+    });
+});
+
+app.get("/api/getHistorychat/", verifyToken, (req, res) => {
+  const userId = req.data.id;
+  db.promise()
+    .query(
+      `SELECT uch.id, uch.user_id, uch.user_chat_id, uch.last_message, uch.isRead, uch.at , us.username, ust.setting  FROM user_chat_history as uch JOIN user as us on uch.user_chat_id=us.id JOIN user_setting as ust on uch.user_chat_id=ust.user_id where uch.user_id=${userId} ORDER BY uch.at DESC`
+    )
+    .then(([row]) => {
+      /*  console.log(row); */
+      res.status(200).json({ status: 200, history_chat: row });
+    })
+    .catch((err) => {
+      throw err;
+    });
 });
 
 app.get("/api/getNotification", verifyToken, (req, res) => {
   const userId = req.data.id;
   db.promise()
     .query(
-      `SELECT * FROM user_notification where to_user_id= '${userId}' ORDER BY type ASC`
+      `SELECT * FROM user_notification where to_user_id= '${userId}' ORDER BY type ASC, at DESC`
     )
     .then(([row]) => {
       res.status(200).json({ notification: row });
@@ -389,12 +481,12 @@ app.post("/api/searchUser", verifyToken, (req, res) => {
 });
 
 app.post("/api/acceptFriend", verifyToken, (req, res) => {
+  //accept friend request
   const userId = req.data.id;
   const friendId = req.body.friendId;
-  const username = req.body.username;
   const notifiId = req.body.notifiId;
   db.query(
-    `INSERT INTO user_friend_list(user_id, friend_id, username) VALUES('${userId}', '${friendId}', '${username}')`,
+    `INSERT INTO user_friend_list(user_id, friend_id) VALUES('${userId}', '${friendId}'), ('${friendId}', '${userId}')`,
     (err, result) => {
       if (err) throw err;
       db.query(
@@ -411,6 +503,33 @@ app.post("/api/acceptFriend", verifyToken, (req, res) => {
       );
     }
   );
+});
+
+app.delete("/api/unFriend/:id", verifyToken, (req, res) => {
+  const friendId = req.params.id;
+  const userId = req.data.id;
+  Promise.all([
+    db
+      .promise()
+      .query(
+        `DELETE FROM user_friend_list where friend_id='${friendId}' AND user_id='${userId}'`
+      ),
+    db
+      .promise()
+      .query(
+        `DELETE FROM user_friend_list where friend_id='${userId}' AND user_id='${friendId}'`
+      ),
+  ])
+    .then(([result1, result2]) => {
+      if (result1[0].affectedRows > 0 && result2[0].affectedRows > 0) {
+        res.status(200).json({ status: 200, unfriend: 1 });
+      } else {
+        res.status(200).json({ status: 200, unfriend: 0 });
+      }
+    })
+    .catch((err) => {
+      throw err;
+    });
 });
 
 app.delete("/api/deleteNotification/:id", (req, res) => {
