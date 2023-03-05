@@ -7,13 +7,20 @@ const jwt = require("jsonwebtoken");
 const path = require("path");
 const compression = require("compression");
 const { Server } = require("socket.io");
-const { createServer } = require("http");
+const { createServer } = require("https");
 
 const app = express();
-const httpServer = createServer(app);
+const httpServer = createServer(
+  {
+    key: fs.readFileSync("key.pem"),
+    cert: fs.readFileSync("cert.pem"),
+  },
+  app
+);
 const io = new Server(httpServer, {
   cors: {
     origin: "*",
+    credentials: true,
   },
 });
 
@@ -120,6 +127,7 @@ io.on("connection", (socket) => {
     ])
       .then(([result1]) => {
         if (result1[0][0] !== undefined) {
+          socket.emit("accepted_request");
           socket.to(result1[0][0].socket_room).emit("accepted_request");
           socket.to(result1[0][0].socket_room).emit("new_notification");
         }
