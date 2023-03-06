@@ -159,7 +159,7 @@ io.on("connection", (socket) => {
       db
         .promise()
         .query(
-          `INSERT INTO user_chat(sent_id, recived_id, content) VALUES ('${data.from_user_id}', '${data.to_user_id}', '${data.content}')`
+          `INSERT INTO user_chat(sent_id, recived_id, content, file) VALUES ('${data.from_user_id}', '${data.to_user_id}', '${data.content}', '${data.files}')`
         ),
     ]).then(async ([result1, result2, result3]) => {
       const message = {
@@ -168,8 +168,13 @@ io.on("connection", (socket) => {
         sent_id: data.from_user_id,
         recived_id: data.to_user_id,
         content: data.content,
+        file: data.files,
       };
-      updateHistoryChat(data.from_user_id, data.to_user_id, data.content);
+      updateHistoryChat(
+        data.from_user_id,
+        data.to_user_id,
+        data.content !== "" ? data.content : `sent 1 images`
+      );
       if (result1[0][0] !== undefined) {
         socket
           .to(result1[0][0].socket_room)
@@ -245,9 +250,23 @@ const updateHistoryChat = async (user_id, user_chat_id, last_message) => {
 
 const maxSize = 10 * 1000 * 1000;
 
-const storage = multer.diskStorage({
+const storageAvatar = multer.diskStorage({
   destination: function (req, file, cb) {
     const uploadDir = `./public/cdn/images/avatar/${req.data.id}/`;
+    if (!fs.existsSync(uploadDir)) {
+      // Kiểm tra xem folder đã tồn tại hay chưa
+      fs.mkdirSync(uploadDir); // Tạo folder mới nếu folder chưa tồn tại
+    }
+    cb(null, uploadDir);
+  },
+  filename: function (req, file, cb) {
+    cb(null, file.originalname);
+  },
+});
+
+const storageImages = multer.diskStorage({
+  destination: function (req, file, cb) {
+    const uploadDir = `./public/cdn/images/${req.data.id}/`;
     if (!fs.existsSync(uploadDir)) {
       // Kiểm tra xem folder đã tồn tại hay chưa
       fs.mkdirSync(uploadDir); // Tạo folder mới nếu folder chưa tồn tại
@@ -376,7 +395,7 @@ const Register = (req, res, next) => {
 };
 
 const upload = multer({
-  storage: storage,
+  storage: storageAvatar,
   limits: { fileSize: maxSize },
   fileFilter: function (req, file, cb) {
     // Set the filetypes, it is optional
@@ -396,6 +415,28 @@ const upload = multer({
     }
   },
 }).single("upload_file");
+
+const uploadMultiFiles = multer({
+  storage: storageImages,
+  limits: { fileSize: maxSize },
+  fileFilter: function (req, file, cb) {
+    // Set the filetypes, it is optional
+    var filetypes = /jpeg|jpg|png|gif/;
+    var mimetype = filetypes.test(file.mimetype);
+    var extname = filetypes.test(path.extname(file.originalname).toLowerCase());
+    if (mimetype && extname) {
+      return cb(null, true);
+    } else {
+      cb(
+        new Error(
+          "Error: File upload only supports the " +
+            "following filetypes - " +
+            filetypes
+        )
+      );
+    }
+  },
+}).array("upload_files");
 
 app.get("/", (req, res) => {
   res.sendStatus(200);
@@ -563,6 +604,19 @@ app.post("/api/upload", verifyToken, (req, res) => {
       res.status(200).json({
         status: 200,
         upload: { filedir: `/${req.data.id}/${req.file.filename}` },
+      });
+    }
+  });
+});
+
+app.post("/api/uploadMultiFiles", verifyToken, (req, res) => {
+  uploadMultiFiles(req, res, (err) => {
+    if (err instanceof multer.MulterError || err) {
+      res.sendStatus(403);
+    } else {
+      res.status(200).json({
+        status: 200,
+        upload: { files: req.files },
       });
     }
   });
